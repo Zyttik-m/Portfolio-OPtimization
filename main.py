@@ -22,7 +22,7 @@ arg.add_argument("--auto_adjust", type=bool, default=False)
 arg.add_argument("--window_size", type=int, default=60)
 arg.add_argument("--rebalance_every", type=int, default=20)
 arg.add_argument("--train_rl", type=bool, default=True, help="Whether to train RL model")
-arg.add_argument("--rl_timesteps", type=int, default=50000, help="Number of timesteps for RL training")
+arg.add_argument("--rl_timesteps", type=int, default=100000, help="Number of timesteps for RL training")
 arg.add_argument("--load_rl_model", type=str, default=None, help="Path to load pre-trained RL model")
 
 
@@ -73,15 +73,22 @@ print(f"Generated {len(benchmark_weights)} benchmark allocations")
 markowitz_weights = models.markowitzloop(returns, args.window_size , args.rebalance_every)
 
 
-# Model Training - Markowitz with LSTM
+# Model Training - Enhanced Markowitz with LSTM
 
-X, y, scalers, scaled_data = models.prepare_multivariate_data(prices, args.window_size )
-model = models.build_multivariate_lstm(n_assets=X.shape[2], window_size = args.window_size)
-model.fit(X, y, epochs=20, batch_size=32)
+print("\n=== Training Enhanced Markowitz + LSTM Model ===")
 
-pred_df = models.predict_on_existing_data(model, X, scaled_data, scalers, prices, args.window_size)
+# Use the enhanced LSTM training function
+lstm_model, X, scalers, scaled_data, target_cols, history = models.train_enhanced_lstm(
+    prices, window_size=args.window_size, epochs=100, use_features=True
+)
+
+# Generate predictions using the enhanced model
+pred_df = models.predict_on_existing_data(lstm_model, X, scaled_data, scalers, prices, target_cols, args.window_size)
 returns_pred = pred_df.pct_change()
 
+print(f"LSTM prediction completed. Predicting returns with shape: {returns_pred.shape}")
+
+# Apply Markowitz optimization to predicted returns
 lstm_weights = models.markowitzloop(returns_pred, args.window_size , args.rebalance_every)
 
 # Model Training - Reinforcement Learning
@@ -96,16 +103,16 @@ if args.load_rl_model:
         print("Failed to load model, skipping RL predictions")
         rl_weights, rl_dates = [], []
 elif args.train_rl:
-    print("\n=== Training Reinforcement Learning Model ===")
-    rl_model, rl_env = models.train_rl_model(returns, args.window_size, total_timesteps=args.rl_timesteps)
+    print("\n=== Training Enhanced Reinforcement Learning Model ===")
+    rl_model, rl_env = models.train_enhanced_rl_model(returns, args.window_size, total_timesteps=args.rl_timesteps)
     
     # Save the trained model
-    rl_model.save("ppo_portfolio_model")
-    print("RL model saved to 'ppo_portfolio_model'")
+    rl_model.save("ppo_portfolio_model_enhanced")
+    print("Enhanced RL model saved to 'ppo_portfolio_model_enhanced'")
     
     # Generate portfolio weights using trained model
     rl_weights, rl_dates = models.predict_rl_weights(rl_model, returns, args.window_size, args.rebalance_every)
-    print(f"Generated {len(rl_weights)} portfolio allocations using RL model")
+    print(f"Generated {len(rl_weights)} portfolio allocations using enhanced RL model")
 else:
     print("\n=== Skipping RL Training (--train_rl=False) ===")
     rl_weights, rl_dates = [], []
