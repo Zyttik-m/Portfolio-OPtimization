@@ -24,9 +24,13 @@ arg.add_argument("--rebalance_every", type=int, default=20)
 arg.add_argument("--train_rl", type=bool, default=True, help="Whether to train RL model")
 arg.add_argument("--rl_timesteps", type=int, default=100000, help="Number of timesteps for RL training")
 arg.add_argument("--load_rl_model", type=str, default=None, help="Path to load pre-trained RL model")
+arg.add_argument("--seed", type=int, default=42, help="Random seed for reproducible results")
 
 
 args = arg.parse_args()
+
+# Set random seeds for reproducible results
+models.set_seeds(args.seed)
 
 os.makedirs('data', exist_ok=True)
 
@@ -79,7 +83,7 @@ print("\n=== Training Enhanced Markowitz + LSTM Model ===")
 
 # Use the enhanced LSTM training function
 lstm_model, X, scalers, scaled_data, target_cols, history = models.train_enhanced_lstm(
-    prices, window_size=args.window_size, epochs=100, use_features=True
+    prices, window_size=args.window_size, epochs=100, use_features=True, seed=args.seed
 )
 
 # Generate predictions using the enhanced model
@@ -104,7 +108,7 @@ if args.load_rl_model:
         rl_weights, rl_dates = [], []
 elif args.train_rl:
     print("\n=== Training Enhanced Reinforcement Learning Model ===")
-    rl_model, rl_env = models.train_enhanced_rl_model(returns, args.window_size, total_timesteps=args.rl_timesteps)
+    rl_model, rl_env = models.train_enhanced_rl_model(returns, args.window_size, total_timesteps=args.rl_timesteps, seed=args.seed)
     
     # Save the trained model
     rl_model.save("ppo_portfolio_model_enhanced")

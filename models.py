@@ -11,6 +11,46 @@ from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 import torch.nn as nn
+import tensorflow as tf
+import torch
+import random
+import os
+
+
+def set_seeds(seed=42):
+    """
+    Set seeds for all random number generators to ensure reproducible results.
+    
+    Args:
+        seed (int): Seed value for reproducibility. Default: 42
+    """
+    print(f"Setting random seeds to {seed} for reproducible results...")
+    
+    # Python built-in random
+    random.seed(seed)
+    
+    # NumPy
+    np.random.seed(seed)
+    
+    # TensorFlow
+    tf.random.set_seed(seed)
+    
+    # Configure TensorFlow for deterministic operations
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+    
+    # PyTorch (used by Stable Baselines3)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    
+    # PyTorch deterministic mode
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    # Set environment variables for additional reproducibility
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    
+    print(f"✓ All random seeds set to {seed}")
 
 
 # Markowitz
@@ -212,11 +252,17 @@ def predict_on_existing_data(model, X, scaled_data, scalers, original_data, targ
     return full_pred_df[original_data.columns].dropna()
 
 
-def train_enhanced_lstm(prices_df, window_size=60, epochs=100, validation_split=0.2, use_features=True):
+def train_enhanced_lstm(prices_df, window_size=60, epochs=100, validation_split=0.2, use_features=True, seed=42):
     """
     Train LSTM model with enhanced features and proper validation.
+    
+    Args:
+        seed (int): Random seed for reproducible training
     """
     print("Preparing enhanced LSTM training data...")
+    
+    # Ensure consistent seeding for this training session
+    set_seeds(seed)
     
     # Prepare data with features
     X, y, scalers, scaled_data, target_cols = prepare_multivariate_data(
@@ -348,6 +394,10 @@ class PortfolioEnv(gym.Env):
     
     def reset(self, seed=None):
         super().reset(seed=seed)
+        if seed is not None:
+            # Ensure consistent seeding within the environment
+            np.random.seed(seed)
+        
         self.current_step = self.window_size
         self.balance = self.initial_balance
         self.portfolio_value = self.initial_balance
@@ -492,10 +542,16 @@ class PortfolioEnv(gym.Env):
         return obs, reward, False, truncated, info
 
 
-def train_enhanced_rl_model(returns, window_size=60, total_timesteps=100000, learning_rate=1e-4):
+def train_enhanced_rl_model(returns, window_size=60, total_timesteps=100000, learning_rate=1e-4, seed=42):
     """
     Train enhanced RL model with optimized hyperparameters.
+    
+    Args:
+        seed (int): Random seed for reproducible training
     """
+    # Ensure consistent seeding for this training session
+    set_seeds(seed)
+    
     # Clean returns data
     returns_clean = returns.dropna()
     returns_clean = returns_clean.fillna(0)
@@ -528,6 +584,7 @@ def train_enhanced_rl_model(returns, window_size=60, total_timesteps=100000, lea
         vf_coef=0.5,  # Value function coefficient
         max_grad_norm=0.5,  # Gradient clipping
         verbose=1,
+        seed=seed,  # Set seed for reproducible RL training
         tensorboard_log="./ppo_portfolio_tensorboard/",
         policy_kwargs=dict(
             net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),  # Larger networks
