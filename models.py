@@ -149,7 +149,7 @@ def mean_variance_objective(weights, expected_returns, cov_matrix, risk_aversion
 
 
 def enhanced_markowitz_optimization(returns, expected_returns, cov_matrix, risk_aversion=1.0, 
-                                  bounds_per_asset=(0.05, 0.70), l2_reg=0.01):
+                                  bounds_per_asset=None, l2_reg=0.01):
     """
     Enhanced Markowitz optimization with proper mean-variance tradeoff.
     
@@ -158,7 +158,7 @@ def enhanced_markowitz_optimization(returns, expected_returns, cov_matrix, risk_
         expected_returns: Expected returns vector
         cov_matrix: Covariance matrix (can be shrunk)
         risk_aversion: Risk aversion level (0.5=aggressive, 1.0=moderate, 2.0=conservative)
-        bounds_per_asset: Min/max weight per asset (default 5%-70%)
+        bounds_per_asset: Min/max weight per asset (auto-calculated if None)
         l2_reg: L2 regularization strength
     
     Returns:
@@ -166,6 +166,19 @@ def enhanced_markowitz_optimization(returns, expected_returns, cov_matrix, risk_
     """
     num_assets = len(expected_returns)
     init_guess = np.ones(num_assets) / num_assets
+    
+    # Auto-calculate bounds based on number of assets
+    if bounds_per_asset is None:
+        min_weight = 0.02  # 2% minimum
+        if num_assets <= 3:
+            max_weight = 0.70  # 70% max for small portfolios
+        elif num_assets <= 5:
+            max_weight = 0.50  # 50% max for medium portfolios  
+        elif num_assets <= 10:
+            max_weight = 0.30  # 30% max for larger portfolios
+        else:
+            max_weight = 0.20  # 20% max for very large portfolios
+        bounds_per_asset = (min_weight, max_weight)
     
     # Constraints: weights sum to 1
     constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
@@ -227,13 +240,13 @@ def enhanced_markowitz_loop(returns, window_size=60, rebalance_every=20, risk_pr
         expected_returns = window_returns.mean()
         shrunk_cov = shrinkage_covariance(window_returns, shrinkage_intensity=0.1)
         
-        # Enhanced optimization
+        # Enhanced optimization (bounds auto-calculated based on number of assets)
         optimal_weights = enhanced_markowitz_optimization(
             window_returns, 
             expected_returns, 
             shrunk_cov,
             risk_aversion=risk_aversion,
-            bounds_per_asset=(0.05, 0.70),  # 5% min, 70% max per asset
+            bounds_per_asset=None,  # Auto-calculate: 2%-30% for 10 assets
             l2_reg=0.01
         )
         

@@ -14,7 +14,7 @@ import numpy as np
 
 arg = ArgumentParser()
 
-arg.add_argument("--tickers", type=str, nargs='+', default=['SPY', 'TLT', 'GLD'])
+arg.add_argument("--tickers", type=str, nargs='+', default=['SPY', 'TLT', 'GLD', 'QQQ', 'IWM', 'VEA', 'VWO', 'VNQ', 'DBC', 'HYG'])
 arg.add_argument("--start", type=str, default='2018-01-01')
 arg.add_argument("--end", type=str, default='2025-01-01')
 arg.add_argument("--interval", type=str, default='1d')
