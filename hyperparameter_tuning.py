@@ -12,25 +12,28 @@ import pickle
 import os
 
 
-def tune_lstm_hyperparameters(prices_df, param_grid=None, n_splits=3, save_results=True):
+def tune_lstm_hyperparameters_20day(prices_df, param_grid=None, n_splits=3, save_results=True, seed=42):
     """
-    Tune LSTM hyperparameters using time series cross-validation.
+    Tune 20-day aligned LSTM hyperparameters.
     
     Args:
         prices_df: Price data
         param_grid: Dictionary of hyperparameters to tune
-        n_splits: Number of CV splits
+        n_splits: Number of CV splits (not used in current implementation)
         save_results: Whether to save results
+        seed: Random seed for reproducibility
     """
     if param_grid is None:
         param_grid = {
-            'window_size': [30, 60, 90],
-            'epochs': [50, 100],
-            'use_features': [True, False],
-            'validation_split': [0.15, 0.2]
+            'window_size': [60],  # Keep fixed for consistency
+            'forecast_horizon': [20],  # Fixed to match rebalancing
+            'overlap_step': [5, 10, 20],  # Key parameter for training data size
+            'epochs': [50, 100, 150],
+            'use_features': [True],  # Keep True based on previous results
+            'validation_split': [0.2]
         }
     
-    print("Starting LSTM hyperparameter tuning...")
+    print("Starting 20-day aligned LSTM hyperparameter tuning...")
     print(f"Parameter grid: {param_grid}")
     
     # Generate all parameter combinations
@@ -38,36 +41,59 @@ def tune_lstm_hyperparameters(prices_df, param_grid=None, n_splits=3, save_resul
     param_values = list(param_grid.values())
     param_combinations = list(itertools.product(*param_values))
     
+    print(f"Total combinations to test: {len(param_combinations)}")
+    
     results = []
     best_score = -np.inf
     best_params = None
     
     for i, param_combo in enumerate(param_combinations):
         params = dict(zip(param_names, param_combo))
-        print(f"\nTesting combination {i+1}/{len(param_combinations)}: {params}")
+        print(f"\n{'='*60}")
+        print(f"Testing combination {i+1}/{len(param_combinations)}: {params}")
+        print(f"{'='*60}")
         
         try:
-            # Train model with these parameters
-            model, X, scalers, scaled_data, target_cols, history = models.train_enhanced_lstm(
+            # Set seed for reproducibility
+            models.set_seeds(seed)
+            
+            # Prepare data with overlap_step parameter
+            X, y, scalers, scaled_data, target_cols = models.prepare_20day_aligned_data(
                 prices_df,
                 window_size=params['window_size'],
+                forecast_horizon=params['forecast_horizon'],
+                use_features=params['use_features'],
+                overlap_step=params.get('overlap_step', 5)
+            )
+            
+            print(f"Training samples created: {len(X)}")
+            
+            # Train 20-day aligned model
+            model, X_train, scalers_train, scaled_data_train, target_cols_train, history = models.train_enhanced_lstm_20day(
+                prices_df,
+                window_size=params['window_size'],
+                forecast_horizon=params['forecast_horizon'],
                 epochs=params['epochs'],
                 validation_split=params['validation_split'],
-                use_features=params['use_features']
+                use_features=params['use_features'],
+                seed=seed
             )
             
             # Get validation loss (lower is better)
             val_loss = min(history.history['val_loss'])
             
-            # Calculate portfolio performance
-            pred_df = models.predict_on_existing_data(
-                model, X, scalers, prices_df, target_cols, params['window_size']
+            # Generate 20-day aligned predictions
+            returns_pred = models.predict_20day_returns(
+                model, prices_df, scalers_train,
+                window_size=params['window_size'],
+                forecast_horizon=params['forecast_horizon'],
+                use_features=params['use_features'],
+                rebalance_every=params['forecast_horizon']
             )
-            returns_pred = pred_df.pct_change()
             
             # Quick Markowitz optimization
             weights, dates = models.markowitzloop(
-                returns_pred, params['window_size'], 20
+                returns_pred, params['window_size'], params['forecast_horizon']
             )
             
             # Calculate Sharpe ratio as performance metric
@@ -109,7 +135,7 @@ def tune_lstm_hyperparameters(prices_df, param_grid=None, n_splits=3, save_resul
             })
     
     print("\n" + "="*60)
-    print("LSTM HYPERPARAMETER TUNING RESULTS")
+    print("20-DAY LSTM HYPERPARAMETER TUNING RESULTS")
     print("="*60)
     print(f"Best parameters: {best_params}")
     print(f"Best score (Sharpe): {best_score:.4f}")
@@ -118,13 +144,14 @@ def tune_lstm_hyperparameters(prices_df, param_grid=None, n_splits=3, save_resul
         # Save results
         results_df = pd.DataFrame([{**r['params'], **{k:v for k,v in r.items() if k != 'params'}} 
                                   for r in results])
-        results_df.to_csv('lstm_hyperparameter_results.csv', index=False)
+        results_df.to_csv('lstm_20day_hyperparameter_results.csv', index=False)
         
         # Save best parameters
-        with open('best_lstm_params.pkl', 'wb') as f:
+        with open('best_lstm_20day_params.pkl', 'wb') as f:
             pickle.dump(best_params, f)
         
-        print(f"Results saved to lstm_hyperparameter_results.csv")
+        print(f"Results saved to lstm_20day_hyperparameter_results.csv")
+        print(f"Best parameters saved to best_lstm_20day_params.pkl")
     
     return best_params, results
 

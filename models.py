@@ -94,6 +94,162 @@ def markowitzloop(returns, window_size = 60, rebalance_every = 20):
     return weights_over_time, dates
 
 
+# Enhanced Markowitz with Mean-Variance Optimization
+
+def shrinkage_covariance(returns, shrinkage_intensity=None):
+    """
+    Compute shrinkage covariance matrix using Ledoit-Wolf method.
+    
+    Args:
+        returns: DataFrame of returns
+        shrinkage_intensity: Float between 0-1, if None uses automatic estimation
+    
+    Returns:
+        Shrunk covariance matrix
+    """
+    sample_cov = returns.cov().values
+    n_samples, n_features = returns.shape
+    
+    if shrinkage_intensity is None:
+        # Automatic shrinkage intensity estimation (simplified Ledoit-Wolf)
+        # This is a simplified version - full implementation would be more complex
+        shrinkage_intensity = min(1.0, max(0.0, (n_features / n_samples) * 0.1))
+    
+    # Identity matrix scaled by average variance
+    identity_scaled = np.eye(n_features) * np.trace(sample_cov) / n_features
+    
+    # Shrunk covariance matrix
+    shrunk_cov = shrinkage_intensity * identity_scaled + (1 - shrinkage_intensity) * sample_cov
+    
+    return pd.DataFrame(shrunk_cov, index=returns.columns, columns=returns.columns)
+
+
+def mean_variance_objective(weights, expected_returns, cov_matrix, risk_aversion=1.0, l2_reg=0.01):
+    """
+    Mean-variance objective function with L2 regularization.
+    
+    Args:
+        weights: Portfolio weights
+        expected_returns: Expected returns vector
+        cov_matrix: Covariance matrix
+        risk_aversion: Risk aversion parameter (higher = more risk averse)
+        l2_reg: L2 regularization strength for diversification
+    
+    Returns:
+        Negative utility (minimize this)
+    """
+    portfolio_return = np.dot(weights, expected_returns)
+    portfolio_risk = np.dot(weights, np.dot(cov_matrix, weights))
+    l2_penalty = l2_reg * np.sum(weights**2)  # Encourages diversification
+    
+    # Utility = Return - (risk_aversion/2) * Risk - L2_penalty
+    utility = portfolio_return - (risk_aversion / 2.0) * portfolio_risk - l2_penalty
+    
+    return -utility  # Minimize negative utility = maximize utility
+
+
+def enhanced_markowitz_optimization(returns, expected_returns, cov_matrix, risk_aversion=1.0, 
+                                  bounds_per_asset=(0.05, 0.70), l2_reg=0.01):
+    """
+    Enhanced Markowitz optimization with proper mean-variance tradeoff.
+    
+    Args:
+        returns: Historical returns data
+        expected_returns: Expected returns vector
+        cov_matrix: Covariance matrix (can be shrunk)
+        risk_aversion: Risk aversion level (0.5=aggressive, 1.0=moderate, 2.0=conservative)
+        bounds_per_asset: Min/max weight per asset (default 5%-70%)
+        l2_reg: L2 regularization strength
+    
+    Returns:
+        Optimized weights array
+    """
+    num_assets = len(expected_returns)
+    init_guess = np.ones(num_assets) / num_assets
+    
+    # Constraints: weights sum to 1
+    constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
+    
+    # Bounds: each asset between bounds_per_asset
+    bounds = tuple(bounds_per_asset for _ in range(num_assets))
+    
+    # Optimize
+    result = minimize(
+        mean_variance_objective,
+        init_guess,
+        args=(expected_returns.values, cov_matrix.values, risk_aversion, l2_reg),
+        method='SLSQP',
+        bounds=bounds,
+        constraints=constraints,
+        options={'maxiter': 1000, 'ftol': 1e-9}
+    )
+    
+    if not result.success:
+        print(f"Optimization warning: {result.message}")
+        # Fallback to equal weights if optimization fails
+        return init_guess
+    
+    return result.x
+
+
+def enhanced_markowitz_loop(returns, window_size=60, rebalance_every=20, risk_profile='moderate'):
+    """
+    Enhanced Markowitz portfolio optimization with proper mean-variance optimization.
+    
+    Args:
+        returns: Price returns DataFrame
+        window_size: Lookback window for estimation
+        rebalance_every: Rebalancing frequency
+        risk_profile: 'conservative', 'moderate', or 'aggressive'
+    
+    Returns:
+        Tuple of (weights_over_time, dates)
+    """
+    # Risk aversion parameters for different profiles
+    risk_aversion_map = {
+        'aggressive': 0.5,    # Higher risk tolerance
+        'moderate': 1.0,      # Balanced approach  
+        'conservative': 2.0   # Lower risk tolerance
+    }
+    
+    risk_aversion = risk_aversion_map.get(risk_profile, 1.0)
+    
+    weights_over_time = []
+    dates = []
+    
+    print(f"Enhanced Markowitz with {risk_profile} profile (λ={risk_aversion})")
+    
+    for i in range(0, len(returns) - window_size, rebalance_every):
+        # Get window data (no more * 100 scaling)
+        window_returns = returns.iloc[i:i + window_size]
+        
+        # Calculate expected returns and shrunk covariance matrix
+        expected_returns = window_returns.mean()
+        shrunk_cov = shrinkage_covariance(window_returns, shrinkage_intensity=0.1)
+        
+        # Enhanced optimization
+        optimal_weights = enhanced_markowitz_optimization(
+            window_returns, 
+            expected_returns, 
+            shrunk_cov,
+            risk_aversion=risk_aversion,
+            bounds_per_asset=(0.05, 0.70),  # 5% min, 70% max per asset
+            l2_reg=0.01
+        )
+        
+        # Calculate metrics for comparison
+        portfolio_return = np.dot(optimal_weights, expected_returns.values)
+        portfolio_risk = np.sqrt(np.dot(optimal_weights, np.dot(shrunk_cov.values, optimal_weights)))
+        
+        print(f"Period {i//rebalance_every + 1}: Weights={optimal_weights.round(3)}, "
+              f"Expected Return={portfolio_return:.4f}, Risk={portfolio_risk:.4f}")
+        
+        weights_over_time.append(optimal_weights)
+        dates.append(returns.index[i + window_size])
+    
+    return weights_over_time, dates
+
+
 
 
 # LSTM + Markowitz
@@ -669,3 +825,420 @@ def load_rl_model(model_path="ppo_portfolio_model"):
     except:
         print(f"Could not load model from {model_path}")
         return None
+
+
+# 20-Day Aligned LSTM Implementation
+def prepare_20day_aligned_data(data, window_size=60, forecast_horizon=20, use_features=True, overlap_step=5):
+    """
+    Prepare data for 20-day aligned LSTM training with overlapping windows for better training data.
+    Uses 60-day windows to predict 20-day cumulative returns.
+    
+    Args:
+        data: Price data DataFrame
+        window_size: Input sequence length (default 60)
+        forecast_horizon: Prediction horizon (default 20) 
+        use_features: Whether to add technical indicators
+        overlap_step: Step size for overlapping windows (default 5 days)
+    
+    Returns:
+        X, y, scalers, scaled_data, target_cols
+    """
+    print(f"Preparing 20-day aligned data: {window_size}-day input → {forecast_horizon}-day prediction")
+    print(f"Using overlapping windows with {overlap_step}-day steps for more training data")
+    
+    if use_features:
+        # Add technical indicators
+        enhanced_data = add_technical_indicators(data)
+        print(f"Enhanced features: {enhanced_data.shape[1]} columns (from {data.shape[1]} original)")
+    else:
+        enhanced_data = data.copy()
+    
+    # Use StandardScaler for normalization
+    scalers = {}
+    scaled_data = pd.DataFrame(index=enhanced_data.index)
+    
+    for col in enhanced_data.columns:
+        scaler = StandardScaler()
+        scaled_data[col] = scaler.fit_transform(enhanced_data[[col]])
+        scalers[col] = scaler
+    
+    # Create sequences for 20-day aligned training with overlapping windows
+    X, y = [], []
+    target_cols = [col for col in data.columns]  # Only predict original asset prices
+    
+    # Generate overlapping samples for better training data
+    for i in range(window_size, len(scaled_data) - forecast_horizon, overlap_step):
+        # Input: 60-day window of all features
+        X.append(scaled_data.iloc[i-window_size:i].values)
+        
+        # Target: 20-day cumulative return for each asset
+        cumulative_returns = []
+        for col in target_cols:
+            # Get original price data for this asset
+            original_col = col
+            start_price = data[original_col].iloc[i-1]  # Price at end of input window
+            end_price = data[original_col].iloc[i + forecast_horizon - 1]  # Price after 20 days
+            
+            # Calculate 20-day cumulative return
+            if start_price != 0:
+                cum_return = (end_price - start_price) / start_price
+            else:
+                cum_return = 0.0
+            
+            # Apply bounds to prevent extreme values
+            cum_return = np.clip(cum_return, -0.5, 1.0)  # Reasonable 20-day return bounds
+            
+            cumulative_returns.append(cum_return)
+        
+        y.append(cumulative_returns)
+    
+    X = np.array(X)
+    y = np.array(y)
+    
+    print(f"Created {len(X)} training samples: X={X.shape}, y={y.shape}")
+    print(f"Improvement: {len(X)} samples vs {len(range(window_size, len(scaled_data) - forecast_horizon, forecast_horizon))} non-overlapping")
+    print(f"Each X sample uses {window_size} days to predict {forecast_horizon}-day returns")
+    
+    # Add data validation
+    if len(X) < 10:
+        print(f"⚠️  WARNING: Only {len(X)} training samples available. Consider using smaller overlap_step or more data.")
+    
+    # Check for invalid targets
+    y_array = np.array(y)
+    invalid_mask = np.isnan(y_array) | np.isinf(y_array)
+    if np.any(invalid_mask):
+        print(f"⚠️  WARNING: Found {np.sum(invalid_mask)} invalid target values. Replacing with 0.")
+        y_array[invalid_mask] = 0.0
+        y = y_array.tolist()
+    
+    return X, np.array(y), scalers, scaled_data, target_cols
+
+
+def train_enhanced_lstm_20day(prices_df, window_size=60, forecast_horizon=20, epochs=100, 
+                             validation_split=0.2, use_features=True, overlap_step=5, seed=42):
+    """
+    Train LSTM model for 20-day prediction horizon aligned with rebalancing.
+    
+    Args:
+        prices_df: Price data DataFrame
+        window_size: Input sequence length
+        forecast_horizon: Prediction horizon (should match rebalance_every)
+        epochs: Training epochs
+        validation_split: Validation split ratio
+        use_features: Whether to use technical indicators
+        overlap_step: Step size between training windows (affects training data size)
+        seed: Random seed for reproducibility
+    
+    Returns:
+        model, X, scalers, scaled_data, target_cols, history
+    """
+    print("Preparing enhanced LSTM training data for 20-day prediction...")
+    
+    # Ensure consistent seeding
+    set_seeds(seed)
+    
+    # Prepare 20-day aligned data with specified overlap_step
+    X, y, scalers, scaled_data, target_cols = prepare_20day_aligned_data(
+        prices_df, window_size=window_size, forecast_horizon=forecast_horizon, 
+        use_features=use_features, overlap_step=overlap_step
+    )
+    
+    print(f"Training data shape: X={X.shape}, y={y.shape}")
+    
+    # Build enhanced model - same architecture as before
+    n_features = X.shape[2]
+    n_assets = y.shape[1]
+    
+    # Model architecture optimized for 20-day prediction
+    model = Sequential([
+        # First LSTM layer with dropout
+        LSTM(128, return_sequences=True, input_shape=(window_size, n_features),
+             dropout=0.2, recurrent_dropout=0.2, 
+             kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+        BatchNormalization(),
+        
+        # Second LSTM layer
+        LSTM(64, return_sequences=True,
+             dropout=0.2, recurrent_dropout=0.2,
+             kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+        BatchNormalization(),
+        
+        # Third LSTM layer
+        LSTM(32, return_sequences=False,
+             dropout=0.2, recurrent_dropout=0.2,
+             kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+        BatchNormalization(),
+        
+        # Dense layers
+        Dense(64, activation='relu', kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+        Dropout(0.3),
+        Dense(32, activation='relu', kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+        Dropout(0.2),
+        Dense(n_assets, activation='linear')  # Predict cumulative returns
+    ])
+    
+    # Compile model
+    model.compile(
+        optimizer='adam',
+        loss='mse',
+        metrics=['mae']
+    )
+    
+    print(f"Model architecture: {n_features} features → {n_assets} assets (20-day cumulative returns)")
+    
+    # Set up callbacks
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=15,
+        restore_best_weights=True,
+        verbose=1
+    )
+    
+    reduce_lr = ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.5,
+        patience=10,
+        min_lr=1e-6,
+        verbose=1
+    )
+    
+    # Train model
+    print("Training enhanced LSTM model for 20-day prediction...")
+    history = model.fit(
+        X, y,
+        epochs=epochs,
+        batch_size=32,
+        validation_split=validation_split,
+        callbacks=[early_stopping, reduce_lr],
+        verbose=1,
+        shuffle=True
+    )
+    
+    print("Training completed!")
+    
+    return model, X, scalers, scaled_data, target_cols, history
+
+
+def predict_20day_returns(model, prices_df, scalers, window_size=60, forecast_horizon=20, 
+                         use_features=True, rebalance_every=20):
+    """
+    Generate 20-day aligned predictions and convert to proper daily returns for portfolio optimization.
+    
+    Args:
+        model: Trained LSTM model
+        prices_df: Price data DataFrame
+        scalers: Fitted scalers from training
+        window_size: Input sequence length
+        forecast_horizon: Prediction horizon
+        use_features: Whether to use technical indicators
+        rebalance_every: Rebalancing frequency (should match forecast_horizon)
+    
+    Returns:
+        DataFrame with daily returns derived from 20-day predictions
+    """
+    print(f"Generating 20-day aligned predictions...")
+    
+    # Prepare features if needed
+    if use_features:
+        enhanced_data = add_technical_indicators(prices_df)
+    else:
+        enhanced_data = prices_df.copy()
+    
+    # Scale data using fitted scalers
+    scaled_data = pd.DataFrame(index=enhanced_data.index)
+    for col in enhanced_data.columns:
+        if col in scalers:
+            scaled_data[col] = scalers[col].transform(enhanced_data[[col]])
+        else:
+            # Handle columns that might not have been in training
+            scaled_data[col] = enhanced_data[col]
+    
+    # Generate predictions at rebalancing intervals
+    predicted_cumulative_returns = []
+    prediction_dates = []
+    prediction_start_dates = []
+    
+    for i in range(window_size, len(scaled_data) - forecast_horizon, rebalance_every):
+        # Extract 60-day window
+        X_sample = scaled_data.iloc[i-window_size:i].values.reshape(1, window_size, -1)
+        
+        # Predict 20-day cumulative returns
+        pred = model.predict(X_sample, verbose=0)[0]
+        
+        # Store prediction with start and end dates
+        predicted_cumulative_returns.append(pred)
+        prediction_start_dates.append(prices_df.index[i])  # Start of prediction period
+        prediction_dates.append(prices_df.index[i + forecast_horizon - 1])  # End of prediction period
+    
+    print(f"Generated {len(predicted_cumulative_returns)} cumulative return predictions")
+    
+    # Create daily returns DataFrame
+    daily_returns = pd.DataFrame(index=prices_df.index, columns=prices_df.columns, dtype=float)
+    daily_returns.fillna(0.0, inplace=True)
+    
+    # Convert 20-day cumulative returns to equivalent daily returns
+    for i, (cum_returns, start_date, end_date) in enumerate(zip(predicted_cumulative_returns, prediction_start_dates, prediction_dates)):
+        
+        # Convert cumulative returns to equivalent daily returns
+        # Formula: daily_rate = (1 + cum_return)^(1/days) - 1
+        daily_equivalent_returns = []
+        for cum_return in cum_returns:
+            # Handle extreme values and ensure valid calculations
+            cum_return = np.clip(cum_return, -0.9, 5.0)  # Reasonable bounds for 20-day returns
+            
+            if cum_return <= -1.0:  # Avoid impossible returns
+                daily_equiv = -0.05  # Max daily loss of 5%
+            else:
+                # Convert to daily equivalent
+                daily_equiv = (1 + cum_return) ** (1.0 / forecast_horizon) - 1
+                # Clip to reasonable daily return range
+                daily_equiv = np.clip(daily_equiv, -0.05, 0.05)
+            
+            daily_equivalent_returns.append(daily_equiv)
+        
+        # Apply these daily returns for the prediction period
+        start_idx = daily_returns.index.get_loc(start_date)
+        end_idx = min(start_idx + forecast_horizon, len(daily_returns))
+        
+        for day_offset in range(end_idx - start_idx):
+            date_idx = start_idx + day_offset
+            if date_idx < len(daily_returns):
+                daily_returns.iloc[date_idx] = daily_equivalent_returns
+        
+        print(f"Prediction {i+1}: {forecast_horizon}-day cumulative returns {cum_returns} -> daily equivalent {daily_equivalent_returns}")
+    
+    # For periods without predictions, use actual historical returns (scaled down)
+    actual_returns = prices_df.pct_change().fillna(0)
+    mask = (daily_returns == 0).all(axis=1)  # Find rows with no predictions
+    daily_returns.loc[mask] = actual_returns.loc[mask] * 0.1  # Use 10% of actual returns as conservative estimate
+    
+    print(f"Created dense daily returns DataFrame: {daily_returns.shape}")
+    print(f"Return range: [{daily_returns.min().min():.4f}, {daily_returns.max().max():.4f}]")
+    print(f"Mean daily return: {daily_returns.mean().mean():.6f}")
+    
+    return daily_returns
+
+
+def validate_lstm_implementation(prices_df, returns_df, window_size=60, forecast_horizon=20):
+    """
+    Validate the 20-day LSTM implementation by checking data consistency and return magnitudes.
+    
+    Args:
+        prices_df: Original price data
+        returns_df: Generated returns from LSTM
+        window_size: LSTM input window size
+        forecast_horizon: Prediction horizon
+    
+    Returns:
+        Dictionary with validation results
+    """
+    print("\n" + "="*60)
+    print("LSTM IMPLEMENTATION VALIDATION")
+    print("="*60)
+    
+    # Calculate actual historical returns for comparison
+    actual_returns = prices_df.pct_change().fillna(0)
+    
+    # Basic statistics
+    print(f"\n📊 RETURN STATISTICS COMPARISON:")
+    print(f"{'Metric':<25} {'Historical':<15} {'LSTM Predicted':<15} {'Ratio':<10}")
+    print("-" * 70)
+    
+    hist_mean = actual_returns.mean().mean()
+    lstm_mean = returns_df.mean().mean()
+    print(f"{'Mean Daily Return':<25} {hist_mean:<15.6f} {lstm_mean:<15.6f} {lstm_mean/hist_mean if hist_mean != 0 else 'N/A':<10.2f}")
+    
+    hist_std = actual_returns.std().mean()
+    lstm_std = returns_df.std().mean()
+    print(f"{'Daily Volatility':<25} {hist_std:<15.6f} {lstm_std:<15.6f} {lstm_std/hist_std if hist_std != 0 else 'N/A':<10.2f}")
+    
+    hist_min = actual_returns.min().min()
+    lstm_min = returns_df.min().min()
+    print(f"{'Min Daily Return':<25} {hist_min:<15.6f} {lstm_min:<15.6f} {lstm_min/hist_min if hist_min != 0 else 'N/A':<10.2f}")
+    
+    hist_max = actual_returns.max().max()
+    lstm_max = returns_df.max().max()
+    print(f"{'Max Daily Return':<25} {hist_max:<15.6f} {lstm_max:<15.6f} {lstm_max/hist_max if hist_max != 0 else 'N/A':<10.2f}")
+    
+    # Check for reasonable ranges
+    print(f"\n🔍 SANITY CHECKS:")
+    reasonable_range = (-0.1, 0.1)  # ±10% daily returns
+    extreme_returns = ((returns_df < reasonable_range[0]) | (returns_df > reasonable_range[1])).sum().sum()
+    total_returns = returns_df.shape[0] * returns_df.shape[1]
+    
+    print(f"Returns outside ±10% range: {extreme_returns}/{total_returns} ({100*extreme_returns/total_returns:.2f}%)")
+    
+    # Check for constant values (potential data issues)
+    constant_days = (returns_df.std(axis=1) == 0).sum()
+    print(f"Days with constant returns across assets: {constant_days}/{len(returns_df)} ({100*constant_days/len(returns_df):.2f}%)")
+    
+    # Check for missing or infinite values
+    nan_count = returns_df.isna().sum().sum()
+    inf_count = np.isinf(returns_df).sum().sum()
+    print(f"NaN values: {nan_count}, Infinite values: {inf_count}")
+    
+    # Calculate 20-day cumulative returns for validation
+    print(f"\n📈 20-DAY CUMULATIVE RETURN ANALYSIS:")
+    
+    # Historical 20-day cumulative returns
+    hist_20day = []
+    for i in range(0, len(actual_returns) - forecast_horizon, forecast_horizon):
+        period_returns = actual_returns.iloc[i:i+forecast_horizon]
+        cum_return = (1 + period_returns).prod() - 1
+        hist_20day.append(cum_return.mean())
+    
+    # LSTM-derived 20-day cumulative returns
+    lstm_20day = []
+    for i in range(0, len(returns_df) - forecast_horizon, forecast_horizon):
+        period_returns = returns_df.iloc[i:i+forecast_horizon]
+        cum_return = (1 + period_returns).prod() - 1
+        lstm_20day.append(cum_return.mean())
+    
+    if hist_20day and lstm_20day:
+        hist_20day_mean = np.mean(hist_20day)
+        lstm_20day_mean = np.mean(lstm_20day[:len(hist_20day)])  # Align lengths
+        
+        print(f"Historical 20-day cum return (mean): {hist_20day_mean:.4f}")
+        print(f"LSTM-derived 20-day cum return (mean): {lstm_20day_mean:.4f}")
+        print(f"Ratio: {lstm_20day_mean/hist_20day_mean if hist_20day_mean != 0 else 'N/A':.2f}")
+    
+    # Risk assessment
+    print(f"\n⚠️  RISK ASSESSMENT:")
+    
+    # Check for Markowitz compatibility
+    returns_for_markowitz = returns_df * 100  # What Markowitz sees
+    extreme_markowitz = ((returns_for_markowitz < -50) | (returns_for_markowitz > 50)).sum().sum()
+    print(f"Values that become extreme in Markowitz (×100): {extreme_markowitz}/{total_returns}")
+    
+    # Calculate maximum portfolio loss with equal weights
+    equal_weight_returns = returns_df.mean(axis=1)
+    max_daily_loss = equal_weight_returns.min()
+    max_20day_loss = equal_weight_returns.rolling(20).sum().min()
+    print(f"Max daily portfolio loss (equal weights): {max_daily_loss:.4f}")
+    print(f"Max 20-day portfolio loss (equal weights): {max_20day_loss:.4f}")
+    
+    # Final assessment
+    print(f"\n✅ VALIDATION SUMMARY:")
+    
+    validation_results = {
+        'returns_reasonable': extreme_returns / total_returns < 0.05,  # <5% extreme
+        'no_missing_data': nan_count == 0 and inf_count == 0,
+        'low_constant_days': constant_days / len(returns_df) < 0.1,  # <10% constant
+        'compatible_with_markowitz': extreme_markowitz / total_returns < 0.01,  # <1% extreme for Markowitz
+        'mean_return': lstm_mean,
+        'volatility': lstm_std,
+        'extreme_return_pct': extreme_returns / total_returns
+    }
+    
+    all_passed = all(validation_results[key] for key in ['returns_reasonable', 'no_missing_data', 'low_constant_days', 'compatible_with_markowitz'])
+    
+    if all_passed:
+        print("🎉 All validation checks PASSED! LSTM implementation looks good.")
+    else:
+        print("❌ Some validation checks FAILED. Review implementation.")
+        failed_checks = [k for k, v in validation_results.items() if k.endswith('reasonable') or k.endswith('_data') or k.endswith('_days') or k.endswith('_markowitz') and not v]
+        print(f"Failed checks: {failed_checks}")
+    
+    print("="*60 + "\n")
+    
+    return validation_results
