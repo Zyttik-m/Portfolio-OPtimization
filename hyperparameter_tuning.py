@@ -19,24 +19,23 @@ def tune_lstm_hyperparameters_20day(prices_df, param_grid=None, n_splits=3, save
     Args:
         prices_df: Price data
         param_grid: Dictionary of hyperparameters to tune
-        n_splits: Number of CV splits (not used in current implementation)
+        n_splits: Number of CV splits 
         save_results: Whether to save results
         seed: Random seed for reproducibility
     """
     if param_grid is None:
         param_grid = {
-            'window_size': [60],  # Keep fixed for consistency
-            'forecast_horizon': [20],  # Fixed to match rebalancing
-            'overlap_step': [5, 10, 20],  # Key parameter for training data size
+            'window_size': [60], 
+            'forecast_horizon': [20],  
+            'overlap_step': [5, 10, 20],  
             'epochs': [50, 100, 150],
-            'use_features': [True],  # Keep True based on previous results
+            'use_features': [True],  
             'validation_split': [0.2]
         }
     
     print("Starting 20-day aligned LSTM hyperparameter tuning...")
     print(f"Parameter grid: {param_grid}")
     
-    # Generate all parameter combinations
     param_names = list(param_grid.keys())
     param_values = list(param_grid.values())
     param_combinations = list(itertools.product(*param_values))
@@ -54,10 +53,8 @@ def tune_lstm_hyperparameters_20day(prices_df, param_grid=None, n_splits=3, save
         print(f"{'='*60}")
         
         try:
-            # Set seed for reproducibility
             models.set_seeds(seed)
             
-            # Prepare data with overlap_step parameter
             X, y, scalers, scaled_data, target_cols = models.prepare_20day_aligned_data(
                 prices_df,
                 window_size=params['window_size'],
@@ -79,7 +76,7 @@ def tune_lstm_hyperparameters_20day(prices_df, param_grid=None, n_splits=3, save
                 seed=seed
             )
             
-            # Get validation loss (lower is better)
+            # Get validation loss
             val_loss = min(history.history['val_loss'])
             
             # Generate 20-day aligned predictions
@@ -176,7 +173,6 @@ def tune_rl_hyperparameters(returns_df, param_grid=None, save_results=True):
     print("Starting RL hyperparameter tuning...")
     print(f"Parameter grid: {param_grid}")
     
-    # Generate all parameter combinations
     param_names = list(param_grid.keys())
     param_values = list(param_grid.values())
     param_combinations = list(itertools.product(*param_values))
@@ -205,7 +201,6 @@ def tune_rl_hyperparameters(returns_df, param_grid=None, save_results=True):
                 learning_rate=params['learning_rate']
             )
             
-            # Generate weights and calculate performance
             weights, dates = models.predict_rl_weights(
                 model, returns_df, params['window_size'], 20
             )

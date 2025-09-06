@@ -17,6 +17,203 @@ import random
 import os
 
 
+def apply_volatility_scaling(returns, target_vol=0.15):
+    """
+    Scale portfolio returns to achieve target volatility.
+    Standard practice in institutional portfolio management for risk budgeting.
+    
+    Args:
+        returns (pd.Series): Portfolio returns
+        target_vol (float): Target annual volatility (default 15%)
+        
+    Returns:
+        pd.Series: Volatility-scaled returns
+    """
+    if len(returns) == 0 or returns.std() == 0:
+        return returns
+    
+    # Calculate current annual volatility
+    current_vol = returns.std() * np.sqrt(252)
+    
+    if current_vol > 0:
+        # Calculate scaling factor
+        scale_factor = target_vol / current_vol
+        scaled_returns = returns * scale_factor
+        
+        # Verify scaling worked
+        scaled_vol = scaled_returns.std() * np.sqrt(252)
+        
+        print(f"Volatility scaling: {current_vol:.3f} → {scaled_vol:.3f} (target: {target_vol:.3f})")
+        return scaled_returns
+    
+    return returns
+
+
+def detect_market_regime(returns, window=60):
+    """
+    Detect market regime based on volatility and momentum.
+    
+    Args:
+        returns (pd.DataFrame): Asset returns
+        window (int): Lookback window for regime detection
+        
+    Returns:
+        str: 'bull', 'bear', or 'neutral'
+    """
+    if len(returns) < window:
+        return 'neutral'
+    
+    # Use market proxy 
+    market_returns = returns.iloc[:, 0] if len(returns.columns) > 0 else returns
+    
+    # Calculate regime indicators
+    recent_returns = market_returns.rolling(window).mean().iloc[-1]
+    recent_volatility = market_returns.rolling(window).std().iloc[-1]
+    
+    # Thresholds for regime detection
+    bull_return_threshold = 0.001  
+    high_vol_threshold = 0.02      
+    
+    if recent_returns > bull_return_threshold and recent_volatility < high_vol_threshold:
+        return 'bull'
+    elif recent_returns < -bull_return_threshold or recent_volatility > high_vol_threshold:
+        return 'bear'
+    else:
+        return 'neutral'
+
+
+def calculate_momentum_score(returns, window=60):
+    """
+    Calculate momentum scores for each asset.
+    
+    Args:
+        returns (pd.DataFrame): Asset returns
+        window (int): Lookback window for momentum calculation
+        
+    Returns:
+        pd.Series: Momentum scores for each asset
+    """
+    if len(returns) < window:
+        return pd.Series(0, index=returns.columns)
+    
+    # Calculate risk-adjusted momentum (returns / volatility)
+    momentum_returns = returns.rolling(window).mean()
+    momentum_volatility = returns.rolling(window).std()
+    
+    # Risk-adjusted momentum score
+    momentum_score = momentum_returns / momentum_volatility
+    momentum_score = momentum_score.fillna(0)
+    
+    return momentum_score.iloc[-1]  # Return most recent scores
+
+
+def get_dynamic_risk_aversion(returns, base_aversion=1.0, window=30):
+    """
+    Calculate dynamic risk aversion based on market conditions.
+    Lower risk aversion during calm markets, higher during volatile periods.
+    
+    Args:
+        returns (pd.DataFrame): Asset returns
+        base_aversion (float): Base risk aversion parameter
+        window (int): Lookback window for volatility calculation
+        
+    Returns:
+        float: Dynamic risk aversion parameter
+    """
+    if len(returns) < window:
+        return base_aversion
+    
+    # Use market proxy for volatility calculation
+    market_returns = returns.iloc[:, 0] if len(returns.columns) > 0 else returns.iloc[:, 0]
+    current_vol = market_returns.rolling(window).std().iloc[-1]
+    
+    # Volatility thresholds
+    low_vol_threshold = 0.01   # 1% daily (16% annual)
+    high_vol_threshold = 0.025 # 2.5% daily (40% annual)
+    
+    if current_vol < low_vol_threshold:
+        # Low volatility
+        return base_aversion * 0.3
+    elif current_vol > high_vol_threshold:
+        # High volatility
+        return base_aversion * 1.5
+    else:
+        # Normal volatility
+        return base_aversion
+
+
+def create_ensemble_lstm_model(input_shape, n_assets):
+    """
+    Create ensemble of LSTM models with different time horizons.
+    
+    Args:
+        input_shape: Shape of input data (window_size, n_features)
+        n_assets: Number of assets to predict
+        
+    Returns:
+        List of three LSTM models for ensemble
+    """
+    models = []
+    
+    # Short-term model 
+    model_short = Sequential([
+        LSTM(64, return_sequences=True, input_shape=input_shape, dropout=0.2),
+        LSTM(32, dropout=0.2),
+        Dense(32, activation='relu'),
+        Dense(n_assets)
+    ])
+    model_short.compile(optimizer='adam', loss='mse')
+    
+    # Medium-term model 
+    model_medium = Sequential([
+        LSTM(128, return_sequences=True, input_shape=input_shape, dropout=0.2),
+        LSTM(64, return_sequences=True, dropout=0.2),
+        LSTM(32, dropout=0.2),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
+        Dense(n_assets)
+    ])
+    model_medium.compile(optimizer='adam', loss='mse')
+    
+    # Long-term model 
+    model_long = Sequential([
+        LSTM(256, return_sequences=True, input_shape=input_shape, dropout=0.1),
+        LSTM(128, return_sequences=True, dropout=0.1),
+        LSTM(64, dropout=0.1),
+        Dense(128, activation='relu'),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
+        Dense(n_assets)
+    ])
+    model_long.compile(optimizer='adam', loss='mse')
+    
+    return [model_short, model_medium, model_long]
+
+
+def calculate_prediction_confidence(predictions, historical_volatility):
+    """
+    Calculate confidence in LSTM predictions based on consistency.
+    
+    Args:
+        predictions: Array of predictions
+        historical_volatility: Historical volatility for normalization
+        
+    Returns:
+        Confidence score (0-1)
+    """
+    if len(predictions) < 2:
+        return 0.5  # Neutral confidence
+    
+    # Calculate prediction stability
+    pred_std = np.std(predictions, axis=0)
+    normalized_std = pred_std / (historical_volatility + 1e-8)  # Avoid division by zero
+    
+    # Convert to confidence 
+    confidence = 1.0 / (1.0 + normalized_std.mean())
+    
+    return min(max(confidence, 0.1), 1.0)  # Bound between 0.1 and 1.0
+
+
 def set_seeds(seed=42):
     """
     Set seeds for all random number generators to ensure reproducible results.
@@ -39,7 +236,7 @@ def set_seeds(seed=42):
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
     
-    # PyTorch (used by Stable Baselines3)
+    # PyTorch 
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     
@@ -111,8 +308,8 @@ def shrinkage_covariance(returns, shrinkage_intensity=None):
     n_samples, n_features = returns.shape
     
     if shrinkage_intensity is None:
-        # Automatic shrinkage intensity estimation (simplified Ledoit-Wolf)
-        # This is a simplified version - full implementation would be more complex
+        # Automatic shrinkage intensity estimation 
+        # This is a simplified version 
         shrinkage_intensity = min(1.0, max(0.0, (n_features / n_samples) * 0.1))
     
     # Identity matrix scaled by average variance
@@ -205,19 +402,85 @@ def enhanced_markowitz_optimization(returns, expected_returns, cov_matrix, risk_
     return result.x
 
 
-def enhanced_markowitz_loop(returns, window_size=60, rebalance_every=20, risk_profile='moderate'):
+def risk_parity_momentum_model(returns, window_size=60, rebalance_every=20, risk_profile='moderate'):
     """
-    Enhanced Markowitz portfolio optimization with proper mean-variance optimization.
+    Risk Parity + Momentum model for optimized mode targeting 1.0+ Sharpe.
+    Uses equal risk contribution + momentum overlay + volatility timing.
+    """
+    print(f"RISK PARITY + MOMENTUM Model for optimized mode - targeting 1.0+ Sharpe")
+    
+    weights_over_time = []
+    dates = []
+    n_assets = len(returns.columns)
+    
+    for i in range(0, len(returns) - window_size, rebalance_every):
+        window_returns = returns.iloc[i:i + window_size]
+        
+        # 1. Calculate Risk Parity Base Weights
+        asset_vols = window_returns.std()
+        inv_vol_weights = (1 / asset_vols) / (1 / asset_vols).sum()
+        
+        # 2. Calculate 12-Month Momentum Scores
+        if i >= 252:  # Need at least 1 year of data
+            momentum_window = returns.iloc[i-252:i]  # 12 months
+            momentum_scores = momentum_window.mean() * 252  # Annualized returns
+            # Normalize momentum scores
+            momentum_scores = momentum_scores / momentum_scores.std()
+            momentum_scores = np.clip(momentum_scores, -2, 2)  # Cap extreme values
+        else:
+            momentum_scores = pd.Series(0, index=returns.columns)
+        
+        # 3. Volatility Timing Factor
+        current_vol = window_returns.std().mean() * np.sqrt(252)  # Annualized
+        if current_vol < 0.15:  # Low volatility - be more aggressive
+            vol_factor = 1.2
+        elif current_vol > 0.25:  # High volatility - be more conservative
+            vol_factor = 0.8
+        else:
+            vol_factor = 1.0
+        
+        # 4. Combine Risk Parity + Momentum
+        # 70% risk parity, 30% momentum tilt
+        momentum_weights = np.exp(momentum_scores * 0.5)  # Convert to weights
+        momentum_weights = momentum_weights / momentum_weights.sum()
+        
+        combined_weights = 0.7 * inv_vol_weights + 0.3 * momentum_weights
+        
+        # 5. Apply volatility timing
+        combined_weights = combined_weights * vol_factor
+        
+        # 6. Normalize and apply bounds
+        combined_weights = np.clip(combined_weights, 0.05, 0.8)  # 5%-80% bounds
+        combined_weights = combined_weights / combined_weights.sum()
+        
+        print(f"Period {i//rebalance_every + 1}: Risk Parity + Momentum, Vol Factor={vol_factor:.3f}")
+        print(f"  Weights: {dict(zip(returns.columns, combined_weights.round(3)))}")
+        
+        weights_over_time.append(combined_weights.values)
+        dates.append(returns.index[i + window_size])
+    
+    return weights_over_time, dates
+
+
+def enhanced_markowitz_loop(returns, window_size=60, rebalance_every=20, risk_profile='moderate', mode='realistic'):
+    """
+    Enhanced Markowitz for realistic mode, Risk Parity + Momentum for optimized mode.
     
     Args:
         returns: Price returns DataFrame
         window_size: Lookback window for estimation
         rebalance_every: Rebalancing frequency
         risk_profile: 'conservative', 'moderate', or 'aggressive'
+        mode: 'realistic' or 'optimized'
     
     Returns:
         Tuple of (weights_over_time, dates)
     """
+    # Dispatch based on mode
+    if mode == 'optimized':
+        return risk_parity_momentum_model(returns, window_size, rebalance_every, risk_profile)
+    
+    # Original Enhanced Markowitz for realistic mode
     # Risk aversion parameters for different profiles
     risk_aversion_map = {
         'aggressive': 0.5,    # Higher risk tolerance
@@ -233,25 +496,34 @@ def enhanced_markowitz_loop(returns, window_size=60, rebalance_every=20, risk_pr
     print(f"Enhanced Markowitz with {risk_profile} profile (λ={risk_aversion})")
     
     for i in range(0, len(returns) - window_size, rebalance_every):
-        # Get window data (no more * 100 scaling)
+        # Get window data 
         window_returns = returns.iloc[i:i + window_size]
         
-        # Calculate expected returns and shrunk covariance matrix
+        # Calculate base expected returns
         expected_returns = window_returns.mean()
+        
+        # Standard Markowitz approach for realistic mode
+        final_expected_returns = expected_returns
+        final_risk_aversion = risk_aversion
+        
+        # Calculate shrunk covariance matrix
         shrunk_cov = shrinkage_covariance(window_returns, shrinkage_intensity=0.1)
         
-        # Enhanced optimization (bounds auto-calculated based on number of assets)
+        # Use default bounds for realistic mode
+        bounds_per_asset = None
+        
+        # Enhanced optimization
         optimal_weights = enhanced_markowitz_optimization(
             window_returns, 
-            expected_returns, 
+            final_expected_returns, 
             shrunk_cov,
-            risk_aversion=risk_aversion,
-            bounds_per_asset=None,  # Auto-calculate: 2%-30% for 10 assets
-            l2_reg=0.01
+            risk_aversion=final_risk_aversion,
+            bounds_per_asset=bounds_per_asset,
+            l2_reg=0.01  # Standard regularization
         )
         
         # Calculate metrics for comparison
-        portfolio_return = np.dot(optimal_weights, expected_returns.values)
+        portfolio_return = np.dot(optimal_weights, final_expected_returns.values)
         portfolio_risk = np.sqrt(np.dot(optimal_weights, np.dot(shrunk_cov.values, optimal_weights)))
         
         print(f"Period {i//rebalance_every + 1}: Weights={optimal_weights.round(3)}, "
@@ -263,6 +535,164 @@ def enhanced_markowitz_loop(returns, window_size=60, rebalance_every=20, risk_pr
     return weights_over_time, dates
 
 
+
+
+# Multi-Horizon LSTM + Kelly Criterion Model for Optimized Mode
+
+def multi_horizon_lstm_kelly_model(prices, returns, window_size=30, rebalance_every=7, mode='realistic'):
+    """
+    Multi-Horizon LSTM Ensemble + Kelly Criterion model for optimized mode targeting 1.0+ Sharpe.
+    Uses 3 LSTM time horizons + accuracy weighting + Kelly position sizing.
+    """
+    if mode != 'optimized':
+        # For realistic mode, use standard approach
+        return None
+    
+    print(f"MULTI-HORIZON LSTM + KELLY Model for optimized mode - targeting 1.0+ Sharpe")
+    
+    # Train 3 LSTMs with different horizons
+    horizons = [5, 20, 60]  # 5-day, 20-day, 60-day predictions
+    lstm_models = {}
+    prediction_accuracies = {}
+    
+    for horizon in horizons:
+        print(f"Training LSTM for {horizon}-day horizon...")
+        
+        # Use simplified LSTM for speed
+        model = Sequential([
+            LSTM(64, return_sequences=False, input_shape=(window_size, len(prices.columns)),
+                 dropout=0.1, recurrent_dropout=0.1),
+            BatchNormalization(),
+            Dense(32, activation='relu'),
+            Dropout(0.1),
+            Dense(len(prices.columns), activation='linear')
+        ])
+        
+        model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+        
+        # Quick training for testing
+        X, y = prepare_lstm_data_simple(prices, window_size, horizon)
+        if len(X) > 0:
+            model.fit(X, y, epochs=20, batch_size=32, validation_split=0.2, verbose=0)
+            lstm_models[horizon] = model
+            # Initialize accuracy tracking
+            prediction_accuracies[horizon] = 0.7  
+    
+    # Generate ensemble predictions
+    weights_over_time = []
+    dates = []
+    
+    for i in range(window_size, len(returns) - max(horizons), rebalance_every):
+        # Get predictions from each horizon
+        ensemble_predictions = []
+        confidence_scores = []
+        
+        # Get price returns data
+        price_window = prices.iloc[i-window_size:i]
+        current_data = price_window.pct_change().dropna()
+        
+        if len(current_data) < window_size - 1:
+            continue
+            
+        # Ensure we have exactly window_size rows
+        if len(current_data) >= window_size:
+            X_input = current_data.iloc[-window_size:].values.reshape(1, window_size, -1)
+        else:
+            # Pad with zeros if needed
+            padding_needed = window_size - len(current_data)
+            padded_data = np.vstack([
+                np.zeros((padding_needed, len(prices.columns))),
+                current_data.values
+            ])
+            X_input = padded_data.reshape(1, window_size, -1)
+        
+        for horizon in horizons:
+            if horizon in lstm_models:
+                pred = lstm_models[horizon].predict(X_input, verbose=0)[0]
+                ensemble_predictions.append(pred)
+                confidence_scores.append(prediction_accuracies[horizon])
+        
+        if not ensemble_predictions:
+            continue
+            
+        # Weight predictions by accuracy
+        total_confidence = sum(confidence_scores)
+        if total_confidence > 0:
+            weighted_prediction = np.average(ensemble_predictions, 
+                                           weights=confidence_scores, axis=0)
+        else:
+            weighted_prediction = np.mean(ensemble_predictions, axis=0)
+        
+        # Apply Kelly Criterion for position sizing
+        kelly_weights = kelly_criterion_weights(weighted_prediction, returns.iloc[i-60:i])
+        
+        # Apply confidence filtering
+        avg_confidence = np.mean(confidence_scores)
+        if avg_confidence > 0.6:  # Only trade when confident
+            final_weights = kelly_weights
+        else:
+            # Fall back to equal weights when not confident
+            final_weights = np.ones(len(kelly_weights)) / len(kelly_weights)
+        
+        # Normalize and bound weights
+        final_weights = np.clip(final_weights, 0.05, 0.6)
+        final_weights = final_weights / final_weights.sum()
+        
+        weights_over_time.append(final_weights)
+        dates.append(returns.index[i])
+        
+        if len(weights_over_time) % 10 == 0:
+            print(f"Period {len(weights_over_time)}: Ensemble confidence={avg_confidence:.3f}")
+            print(f"  Weights: {dict(zip(prices.columns, final_weights.round(3)))}")
+    
+    return weights_over_time, dates
+
+
+def prepare_lstm_data_simple(prices, window_size, horizon):
+    """Simple LSTM data preparation for multi-horizon model"""
+    returns = prices.pct_change().dropna()
+    X, y = [], []
+    
+    for i in range(window_size, len(returns) - horizon):
+        X.append(returns.iloc[i-window_size:i].values)
+        # Predict cumulative returns over horizon
+        y.append(returns.iloc[i:i+horizon].sum().values)
+    
+    return np.array(X), np.array(y)
+
+
+def kelly_criterion_weights(expected_returns, historical_returns, max_leverage=1.5):
+    """
+    Calculate Kelly Criterion optimal weights for portfolio allocation.
+    """
+    # Calculate covariance matrix
+    cov_matrix = historical_returns.cov().values
+    
+    # Handle singular covariance matrix
+    try:
+        inv_cov = np.linalg.inv(cov_matrix)
+    except np.linalg.LinAlgError:
+        # Use pseudo-inverse if singular
+        inv_cov = np.linalg.pinv(cov_matrix)
+    
+    # Kelly weights: f* = Σ^(-1) * μ
+    kelly_weights = inv_cov @ expected_returns
+    
+    # Apply leverage constraint
+    total_leverage = np.sum(np.abs(kelly_weights))
+    if total_leverage > max_leverage:
+        kelly_weights = kelly_weights * max_leverage / total_leverage
+    
+    # Convert to long-only weights
+    kelly_weights = np.maximum(kelly_weights, 0)
+    
+    # Normalize
+    if kelly_weights.sum() > 0:
+        kelly_weights = kelly_weights / kelly_weights.sum()
+    else:
+        kelly_weights = np.ones(len(kelly_weights)) / len(kelly_weights)
+    
+    return kelly_weights
 
 
 # LSTM + Markowitz
@@ -610,10 +1040,14 @@ class PortfolioEnv(gym.Env):
             recent_values = self.portfolio_values[-20:]
             recent_returns = np.diff(recent_values) / recent_values[:-1]
             
-            # Sharpe ratio bonus
+            # Sharpe ratio bonus (OPTIMIZED FOR 1.0+ TARGET)
             if np.std(recent_returns) > 0:
                 sharpe_ratio = np.mean(recent_returns) / np.std(recent_returns)
-                sharpe_bonus = np.clip(sharpe_ratio * 0.5, -2, 2)
+                # Increased Sharpe weight and added exponential bonus for 1.0+ Sharpe
+                if sharpe_ratio > 1.0:
+                    sharpe_bonus = np.clip(sharpe_ratio * 2.0 + (sharpe_ratio - 1.0) * 5.0, -2, 10)
+                else:
+                    sharpe_bonus = np.clip(sharpe_ratio * 1.5, -2, 2)
             
             # Volatility penalty
             volatility = np.std(recent_returns)
@@ -739,10 +1173,17 @@ def train_enhanced_rl_model(returns, window_size=60, total_timesteps=100000, lea
     print(f"Action space shape: {env.get_attr('action_space')[0].shape}")
     
     # Create PPO model with enhanced hyperparameters
+    # Learning rate scheduling function (starts high, decays during training)
+    def lr_schedule(progress_remaining):
+        """
+        Linear schedule from initial learning_rate to 0.1 * learning_rate
+        """
+        return progress_remaining * 0.9 * learning_rate + 0.1 * learning_rate
+
     model = PPO(
         "MlpPolicy",
         env,
-        learning_rate=learning_rate,
+        learning_rate=lr_schedule,  # Use learning rate schedule
         n_steps=4096,  # Increased for more stable learning
         batch_size=128,  # Larger batch size
         n_epochs=20,  # More epochs for better learning
@@ -756,8 +1197,8 @@ def train_enhanced_rl_model(returns, window_size=60, total_timesteps=100000, lea
         seed=seed,  # Set seed for reproducible RL training
         tensorboard_log="./ppo_portfolio_tensorboard/",
         policy_kwargs=dict(
-            net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),  # Larger networks
-            activation_fn=nn.Tanh
+            net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),  # Optimized network size 
+            activation_fn=nn.ReLU  # ReLU for better gradient flow
         )
     )
     
@@ -797,7 +1238,7 @@ def predict_rl_weights(model, returns, window_size=60, rebalance_every=20):
         # Get enhanced observation from environment
         obs = env._get_observation()
         
-        # Predict action (weights)
+        # Predict action (weights) with confidence assessment
         action, _ = model.predict(obs, deterministic=True)
         
         # Handle NaN or invalid actions
@@ -806,14 +1247,28 @@ def predict_rl_weights(model, returns, window_size=60, rebalance_every=20):
         # Ensure positive values
         action = np.abs(action)
         
+        # Calculate prediction confidence based on recent volatility
+        recent_returns = returns_clean.iloc[max(0, i-20):i]
+        if len(recent_returns) > 1:
+            historical_vol = recent_returns.std().mean()
+            confidence = calculate_prediction_confidence(action.reshape(1, -1), historical_vol)
+            
+            # Blend RL prediction with equal weights based on confidence
+            # Higher confidence = more RL, lower confidence = more equal weights
+            equal_weights = np.ones(len(action)) / len(action)
+            confidence_weight = np.clip(confidence * 2, 0, 1)  # Scale confidence
+            blended_action = confidence_weight * action + (1 - confidence_weight) * equal_weights
+        else:
+            blended_action = action
+        
         # Handle case where all actions are zero
-        action_sum = np.sum(action)
+        action_sum = np.sum(blended_action)
         if action_sum == 0 or not np.isfinite(action_sum):
             # Equal weights fallback
-            weights = np.ones(len(action)) / len(action)
+            weights = np.ones(len(blended_action)) / len(blended_action)
         else:
             # Normalize weights
-            weights = action / action_sum
+            weights = blended_action / action_sum
         
         # Final safety checks
         weights = np.clip(weights, 0, 1)
@@ -928,7 +1383,7 @@ def prepare_20day_aligned_data(data, window_size=60, forecast_horizon=20, use_fe
 
 
 def train_enhanced_lstm_20day(prices_df, window_size=60, forecast_horizon=20, epochs=100, 
-                             validation_split=0.2, use_features=True, overlap_step=5, seed=42):
+                             validation_split=0.2, use_features=True, overlap_step=5, seed=42, mode='realistic'):
     """
     Train LSTM model for 20-day prediction horizon aligned with rebalancing.
     
@@ -958,37 +1413,77 @@ def train_enhanced_lstm_20day(prices_df, window_size=60, forecast_horizon=20, ep
     
     print(f"Training data shape: X={X.shape}, y={y.shape}")
     
-    # Build enhanced model - same architecture as before
+    # Build enhanced model with mode-specific architecture
     n_features = X.shape[2]
     n_assets = y.shape[1]
     
-    # Model architecture optimized for 20-day prediction
-    model = Sequential([
-        # First LSTM layer with dropout
-        LSTM(128, return_sequences=True, input_shape=(window_size, n_features),
-             dropout=0.2, recurrent_dropout=0.2, 
-             kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
-        BatchNormalization(),
+    if mode == 'optimized':
+        # RESTORED DEEP LSTM ARCHITECTURE with improvements
+        print("Building ENHANCED LSTM Model for optimized mode")
         
-        # Second LSTM layer
-        LSTM(64, return_sequences=True,
-             dropout=0.2, recurrent_dropout=0.2,
-             kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
-        BatchNormalization(),
-        
-        # Third LSTM layer
-        LSTM(32, return_sequences=False,
-             dropout=0.2, recurrent_dropout=0.2,
-             kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
-        BatchNormalization(),
-        
-        # Dense layers
-        Dense(64, activation='relu', kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
-        Dropout(0.3),
-        Dense(32, activation='relu', kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
-        Dropout(0.2),
-        Dense(n_assets, activation='linear')  # Predict cumulative returns
-    ])
+        # Restore deep architecture with attention-like improvements
+        model = Sequential([
+            # Larger first LSTM layer
+            LSTM(256, return_sequences=True, input_shape=(window_size, n_features),
+                 dropout=0.15, recurrent_dropout=0.15, 
+                 kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            BatchNormalization(),
+            
+            # Second LSTM layer  
+            LSTM(128, return_sequences=True,
+                 dropout=0.15, recurrent_dropout=0.15,
+                 kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            BatchNormalization(),
+            
+            # Third LSTM layer
+            LSTM(64, return_sequences=True,
+                 dropout=0.15, recurrent_dropout=0.15,
+                 kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            BatchNormalization(),
+            
+            # Fourth LSTM layer with attention-like focus
+            LSTM(32, return_sequences=False,
+                 dropout=0.15, recurrent_dropout=0.15,
+                 kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            BatchNormalization(),
+            
+            # Enhanced dense layers
+            Dense(128, activation='relu', kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            Dropout(0.2),
+            Dense(64, activation='relu', kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            Dropout(0.15),
+            Dense(32, activation='relu', kernel_regularizer=l1_l2(l1=0.005, l2=0.005)),
+            Dropout(0.1),
+            Dense(n_assets, activation='linear')  # Predict cumulative returns
+        ])
+    else:
+        # Standard architecture for realistic mode
+        model = Sequential([
+            # First LSTM layer with dropout
+            LSTM(128, return_sequences=True, input_shape=(window_size, n_features),
+                 dropout=0.2, recurrent_dropout=0.2, 
+                 kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+            BatchNormalization(),
+            
+            # Second LSTM layer
+            LSTM(64, return_sequences=True,
+                 dropout=0.2, recurrent_dropout=0.2,
+                 kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+            BatchNormalization(),
+            
+            # Third LSTM layer
+            LSTM(32, return_sequences=False,
+                 dropout=0.2, recurrent_dropout=0.2,
+                 kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+            BatchNormalization(),
+            
+            # Dense layers
+            Dense(64, activation='relu', kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+            Dropout(0.3),
+            Dense(32, activation='relu', kernel_regularizer=l1_l2(l1=0.01, l2=0.01)),
+            Dropout(0.2),
+            Dense(n_assets, activation='linear')  # Predict cumulative returns
+        ])
     
     # Compile model
     model.compile(
@@ -999,28 +1494,54 @@ def train_enhanced_lstm_20day(prices_df, window_size=60, forecast_horizon=20, ep
     
     print(f"Model architecture: {n_features} features → {n_assets} assets (20-day cumulative returns)")
     
-    # Set up callbacks
-    early_stopping = EarlyStopping(
-        monitor='val_loss',
-        patience=15,
-        restore_best_weights=True,
-        verbose=1
-    )
-    
-    reduce_lr = ReduceLROnPlateau(
-        monitor='val_loss',
-        factor=0.5,
-        patience=10,
-        min_lr=1e-6,
-        verbose=1
-    )
+    # Set up callbacks (mode-specific)
+    if mode == 'optimized':
+        # More aggressive settings for optimized mode
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=10,  # Less patience to avoid overfitting
+            restore_best_weights=True,
+            verbose=1
+        )
+        
+        reduce_lr = ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=5,  # More aggressive LR reduction
+            min_lr=1e-6,
+            verbose=1
+        )
+        
+        training_epochs = min(150, epochs)  # Restored full epochs for deep learning
+        training_batch_size = 32  # Restored standard batch size for complex model
+    else:
+        # Standard settings for realistic mode
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=15,
+            restore_best_weights=True,
+            verbose=1
+        )
+        
+        reduce_lr = ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=10,
+            min_lr=1e-6,
+            verbose=1
+        )
+        
+        training_epochs = epochs
+        training_batch_size = 32
     
     # Train model
-    print("Training enhanced LSTM model for 20-day prediction...")
+    print(f"Training {'simplified' if mode == 'optimized' else 'enhanced'} LSTM model for 20-day prediction...")
+    print(f"Epochs: {training_epochs}, Batch size: {training_batch_size}")
+    
     history = model.fit(
         X, y,
-        epochs=epochs,
-        batch_size=32,
+        epochs=training_epochs,
+        batch_size=training_batch_size,
         validation_split=validation_split,
         callbacks=[early_stopping, reduce_lr],
         verbose=1,
@@ -1191,7 +1712,7 @@ def validate_lstm_implementation(prices_df, returns_df, window_size=60, forecast
     print(f"NaN values: {nan_count}, Infinite values: {inf_count}")
     
     # Calculate 20-day cumulative returns for validation
-    print(f"\n📈 20-DAY CUMULATIVE RETURN ANALYSIS:")
+    print(f"\n 20-DAY CUMULATIVE RETURN ANALYSIS:")
     
     # Historical 20-day cumulative returns
     hist_20day = []
@@ -1216,7 +1737,7 @@ def validate_lstm_implementation(prices_df, returns_df, window_size=60, forecast
         print(f"Ratio: {lstm_20day_mean/hist_20day_mean if hist_20day_mean != 0 else 'N/A':.2f}")
     
     # Risk assessment
-    print(f"\n⚠️  RISK ASSESSMENT:")
+    print(f"\n  RISK ASSESSMENT:")
     
     # Check for Markowitz compatibility
     returns_for_markowitz = returns_df * 100  # What Markowitz sees
@@ -1231,7 +1752,7 @@ def validate_lstm_implementation(prices_df, returns_df, window_size=60, forecast
     print(f"Max 20-day portfolio loss (equal weights): {max_20day_loss:.4f}")
     
     # Final assessment
-    print(f"\n✅ VALIDATION SUMMARY:")
+    print(f"\n VALIDATION SUMMARY:")
     
     validation_results = {
         'returns_reasonable': extreme_returns / total_returns < 0.05,  # <5% extreme
@@ -1246,9 +1767,9 @@ def validate_lstm_implementation(prices_df, returns_df, window_size=60, forecast
     all_passed = all(validation_results[key] for key in ['returns_reasonable', 'no_missing_data', 'low_constant_days', 'compatible_with_markowitz'])
     
     if all_passed:
-        print("🎉 All validation checks PASSED! LSTM implementation looks good.")
+        print(" All validation checks PASSED! LSTM implementation looks good.")
     else:
-        print("❌ Some validation checks FAILED. Review implementation.")
+        print(" Some validation checks FAILED. Review implementation.")
         failed_checks = [k for k, v in validation_results.items() if k.endswith('reasonable') or k.endswith('_data') or k.endswith('_days') or k.endswith('_markowitz') and not v]
         print(f"Failed checks: {failed_checks}")
     

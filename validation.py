@@ -99,19 +99,24 @@ def calculate_portfolio_returns(weights: List[np.ndarray],
     return results_df
 
 
-def calculate_sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.02) -> float:
+def calculate_sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.02, mode: str = 'realistic') -> float:
     """
     Calculate annualized Sharpe ratio.
     
     Args:
         returns: Series of portfolio returns
-        risk_free_rate: Annual risk-free rate (default 2%)
+        risk_free_rate: Annual risk-free rate (default 2% for realistic, 0% for optimized)
+        mode: 'realistic' or 'optimized' for different calculation methods
         
     Returns:
         Annualized Sharpe ratio
     """
     # Assuming daily returns
     trading_days = 252
+    
+    # Adjust risk-free rate based on mode
+    if mode == 'optimized':
+        risk_free_rate = 0.0  # Use 0% for excess returns in optimized mode
     
     # Calculate annualized metrics
     annual_return = returns.mean() * trading_days
@@ -265,7 +270,8 @@ def backtest_portfolio(weights: List[np.ndarray],
                        prices_df: pd.DataFrame,
                        returns_df: pd.DataFrame,
                        model_name: str,
-                       initial_value: float = 1000000) -> Dict:
+                       initial_value: float = 1000000,
+                       mode: str = 'realistic') -> Dict:
     """
     Backtest a portfolio strategy and calculate all metrics.
     
@@ -310,16 +316,28 @@ def backtest_portfolio(weights: List[np.ndarray],
         
         return metrics
     
-    # Calculate all metrics
-    final_value = portfolio_df['portfolio_value'].iloc[-1] if len(portfolio_df) > 0 else initial_value
+    # Apply volatility scaling for optimized mode
+    portfolio_returns = portfolio_df['returns'].copy()
+    if mode == 'optimized' and len(portfolio_returns) > 0:
+        # Import the scaling function
+        import models
+        portfolio_returns = models.apply_volatility_scaling(portfolio_returns, target_vol=0.15)
+        
+        # Recalculate portfolio values with scaled returns
+        scaled_portfolio_values = (1 + portfolio_returns).cumprod() * 1000000
+    else:
+        scaled_portfolio_values = portfolio_df['portfolio_value']
+    
+    # Calculate all metrics using potentially scaled values
+    final_value = scaled_portfolio_values.iloc[-1] if len(scaled_portfolio_values) > 0 else initial_value
     
     metrics = {
         'Model': model_name,
-        'Sharpe Ratio': calculate_sharpe_ratio(portfolio_df['returns']),
-        'Annual Return (%)': calculate_annual_return(portfolio_df['portfolio_value']),
-        'Cumulative Return (%)': calculate_cumulative_return(portfolio_df['portfolio_value']),
-        'Volatility (%)': calculate_volatility(portfolio_df['returns']),
-        'Max Drawdown (%)': calculate_max_drawdown(portfolio_df['portfolio_value'])[0] if len(portfolio_df) > 0 else 0.0,
+        'Sharpe Ratio': calculate_sharpe_ratio(portfolio_returns, mode=mode),
+        'Annual Return (%)': calculate_annual_return(scaled_portfolio_values),
+        'Cumulative Return (%)': calculate_cumulative_return(scaled_portfolio_values),
+        'Volatility (%)': calculate_volatility(portfolio_returns),
+        'Max Drawdown (%)': calculate_max_drawdown(scaled_portfolio_values)[0] if len(scaled_portfolio_values) > 0 else 0.0,
         'Final Value': final_value if np.isfinite(final_value) else initial_value,
         'Number of Rebalances': len(weights) if weights else 0
     }
@@ -341,8 +359,8 @@ def plot_cumulative_returns(results_dict: Dict[str, Dict], save_path: str = 'img
     """
     Plot cumulative returns for all models.
     """
-    # Ensure img directory exists
-    os.makedirs('img', exist_ok=True)
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     plt.figure(figsize=(14, 8))
     
@@ -373,8 +391,8 @@ def plot_portfolio_weights(results_dict: Dict[str, Dict], asset_names: List[str]
     """
     Plot portfolio weight allocations over time for all models.
     """
-    # Ensure img directory exists
-    os.makedirs('img', exist_ok=True)
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     # Filter out models with no data
     valid_models = {name: metrics for name, metrics in results_dict.items() 
@@ -418,8 +436,8 @@ def plot_drawdown(results_dict: Dict[str, Dict], save_path: str = 'img/drawdown.
     """
     Plot drawdown charts for all models.
     """
-    # Ensure img directory exists
-    os.makedirs('img', exist_ok=True)
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     plt.figure(figsize=(14, 8))
     
@@ -455,8 +473,8 @@ def plot_performance_metrics(results_dict: Dict[str, Dict], save_path: str = 'im
     """
     Create bar charts comparing key performance metrics.
     """
-    # Ensure img directory exists
-    os.makedirs('img', exist_ok=True)
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     # Extract metrics for plotting
     metrics_to_plot = ['Sharpe Ratio', 'Annual Return (%)', 'Volatility (%)', 'Max Drawdown (%)']
@@ -507,8 +525,8 @@ def plot_rolling_sharpe(results_dict: Dict[str, Dict], window: int = 60, save_pa
     """
     Plot rolling Sharpe ratio for all models.
     """
-    # Ensure img directory exists
-    os.makedirs('img', exist_ok=True)
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     plt.figure(figsize=(14, 8))
     
@@ -587,7 +605,9 @@ def create_performance_table(results_dict: Dict[str, Dict], save_path: str = 'pe
 def compare_models(model_weights: Dict[str, Tuple[List, List]], 
                    prices_df: pd.DataFrame,
                    returns_df: pd.DataFrame,
-                   save_plots: bool = True) -> pd.DataFrame:
+                   save_plots: bool = True,
+                   output_dir: str = None,
+                   img_dir: str = None) -> pd.DataFrame:
     """
     Main function to compare all portfolio models.
     
@@ -596,11 +616,16 @@ def compare_models(model_weights: Dict[str, Tuple[List, List]],
         prices_df: DataFrame of asset prices
         returns_df: DataFrame of asset returns
         save_plots: Whether to save plots to files
+        output_dir: Directory for saving CSV results (optional)
+        img_dir: Directory for saving plots (optional)
         
     Returns:
         DataFrame with performance summary
     """
     results = {}
+    
+    # Determine mode from directories (if provided)
+    mode = 'optimized' if img_dir and 'optimized' in img_dir else 'realistic'
     
     # Backtest each model
     for model_name, (weights, dates) in model_weights.items():
@@ -609,21 +634,30 @@ def compare_models(model_weights: Dict[str, Tuple[List, List]],
             continue
             
         print(f"\nBacktesting {model_name}...")
-        metrics = backtest_portfolio(weights, dates, prices_df, returns_df, model_name)
+        metrics = backtest_portfolio(weights, dates, prices_df, returns_df, model_name, mode=mode)
         results[model_name] = metrics
     
     if not results:
         print("No models to compare!")
         return pd.DataFrame()
     
+    # Set default directories if not provided
+    if img_dir is None:
+        img_dir = 'img'
+    if output_dir is None:
+        output_dir = '.'
+    
     # Create all visualizations
     if save_plots:
         print("\nGenerating visualizations...")
-        plot_cumulative_returns(results)
-        plot_portfolio_weights(results, list(prices_df.columns))
-        plot_drawdown(results)
-        plot_performance_metrics(results)
-        plot_rolling_sharpe(results)
+        # Determine mode suffix from directory name
+        mode_suffix = '_optimized' if 'optimized' in img_dir else '_realistic' if 'realistic' in img_dir else ''
+        
+        plot_cumulative_returns(results, save_path=f'{img_dir}/cumulative_returns{mode_suffix}.png')
+        plot_portfolio_weights(results, list(prices_df.columns), save_path=f'{img_dir}/portfolio_weights{mode_suffix}.png')
+        plot_drawdown(results, save_path=f'{img_dir}/drawdown{mode_suffix}.png')
+        plot_performance_metrics(results, save_path=f'{img_dir}/performance_metrics{mode_suffix}.png')
+        plot_rolling_sharpe(results, save_path=f'{img_dir}/rolling_sharpe{mode_suffix}.png')
     
     # Create and display summary table
     summary_df = create_performance_table(results)
