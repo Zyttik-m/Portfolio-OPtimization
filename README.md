@@ -339,32 +339,12 @@ This implementation draws from cutting-edge research in quantitative finance:
 - **Schulman, J. et al.** (2017). Proximal Policy Optimization Algorithms
 - **Hochreiter, S. & Schmidhuber, J.** (1997). Long Short-Term Memory
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## 👨‍💻 Author
 
 **Kittithat Chalermvisutkul**
 - **Portfolio**: [MathtoData.com](https://mathtodata.com)
 - **GitHub**: [@Zyttik-m](https://github.com/Zyttik-m)
-- **LinkedIn**: [linkedin.com/in/timmy-l-chan](https://linkedin.com/in/timmy-l-chan)
-- **Email**: kittithatck@gmail.com
-
-## 🙏 Acknowledgments
-
-- **Yahoo Finance** for providing financial data APIs
-- **Stable Baselines3** team for reinforcement learning implementations
-- **TensorFlow** community for deep learning framework
-- **Quantitative Finance** community for theoretical foundations
-
-## 📞 Support
-
-For questions, issues, or collaboration opportunities:
-
-- **Issues**: [GitHub Issues](https://github.com/Zyttik-m/Portfolio-OPtimization/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Zyttik-m/Portfolio-OPtimization/discussions)
-- **Email**: kittithatck@gmail.com
+- **LinkedIn**: [linkedin.com/in/Kittithat-CH](https://linkedin.com/in/Kittithat-CH)
 
 ---
 
