@@ -342,7 +342,6 @@ This implementation draws from cutting-edge research in quantitative finance:
 ## 👨‍💻 Author
 
 **Kittithat Chalermvisutkul**
-- **Portfolio**: [MathtoData.com](https://mathtodata.com)
 - **GitHub**: [@Zyttik-m](https://github.com/Zyttik-m)
 - **LinkedIn**: [linkedin.com/in/Kittithat-CH](https://linkedin.com/in/Kittithat-CH)
 
