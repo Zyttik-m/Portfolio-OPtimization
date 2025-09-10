@@ -345,11 +345,4 @@ This implementation draws from cutting-edge research in quantitative finance:
 - **GitHub**: [@Zyttik-m](https://github.com/Zyttik-m)
 - **LinkedIn**: [linkedin.com/in/Kittithat-CH](https://linkedin.com/in/Kittithat-CH)
 
----
 
-⭐ **If you find this project useful, please give it a star!**  
-🔗 **Check out my other quantitative finance and machine learning projects!**
-
-![Portfolio Performance](https://via.placeholder.com/800x400/1f77b4/ffffff?text=Portfolio+Performance+Visualization)
-
-*Built with ❤️ for the quantitative finance community*
