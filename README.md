@@ -271,10 +271,6 @@ CRYPTO_TICKERS = ['BTC-USD', 'ETH-USD', 'ADA-USD']
 - [ ] **Cloud Deployment** - AWS/GCP integration
 - [ ] **Database Integration** - Historical data storage
 
-## 🤝 Contributing
-
-
-
 ## 👨‍💻 Author
 
 **Kittithat Chalermvisutkul**
