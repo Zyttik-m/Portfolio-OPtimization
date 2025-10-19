@@ -119,31 +119,6 @@ python main.py --mode optimized --tune_hyperparameters
 python main.py --mode changeperiod --rebalance_freq 30
 ```
 
-### Configuration Options
-```python
-# Available modes
---mode realistic     # Standard backtesting mode
---mode optimized     # Enhanced optimization with tuning
---mode changeperiod  # Variable rebalancing frequency
-
-# Asset selection
---tickers SPY TLT GLD BTC  # Specify asset universe
-
-# Time periods
---start 2018-01-01   # Start date
---end 2025-01-01     # End date
-
-# Risk management
---risk_profile conservative  # Risk tolerance level
---max_drawdown 0.15         # Maximum allowed drawdown
-```
-
-### Interactive Analysis
-```bash
-# Launch Jupyter notebook for interactive exploration
-jupyter notebook portfolioOPT.ipynb
-```
-
 ## 📈 Portfolio Strategies
 
 ### 1. Markowitz Mean-Variance Optimization
@@ -298,46 +273,7 @@ CRYPTO_TICKERS = ['BTC-USD', 'ETH-USD', 'ADA-USD']
 
 ## 🤝 Contributing
 
-We welcome contributions to enhance this portfolio optimization framework!
 
-### How to Contribute
-1. **Fork the repository**
-```bash
-git fork https://github.com/Zyttik-m/Portfolio-OPtimization.git
-```
-
-2. **Create a feature branch**
-```bash
-git checkout -b feature/enhancement-name
-```
-
-3. **Commit your changes**
-```bash
-git commit -am 'Add new optimization strategy'
-```
-
-4. **Push to the branch**
-```bash
-git push origin feature/enhancement-name
-```
-
-5. **Create a Pull Request**
-
-### Contribution Guidelines
-- Follow PEP 8 style guidelines
-- Add comprehensive docstrings
-- Include unit tests for new features
-- Update documentation accordingly
-- Ensure backward compatibility
-
-## 📚 Academic References
-
-This implementation draws from cutting-edge research in quantitative finance:
-
-- **Markowitz, H.** (1952). Portfolio Selection. *Journal of Finance*
-- **Kelly, J.** (1956). A New Interpretation of Information Rate
-- **Schulman, J. et al.** (2017). Proximal Policy Optimization Algorithms
-- **Hochreiter, S. & Schmidhuber, J.** (1997). Long Short-Term Memory
 
 ## 👨‍💻 Author
 
